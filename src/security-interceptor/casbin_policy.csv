@@ -1,0 +1,8 @@
+p, admin, tenant_us, com.enterprise.services.InventoryService/*, WRITE
+p, admin, tenant_us, com.enterprise.services.InventoryService/*, READ
+p, operator, tenant_us, com.enterprise.services.InventoryService/*, READ
+p, admin, tenant_eu, com.enterprise.services.InventoryService/*, WRITE
+p, admin, tenant_eu, com.enterprise.services.InventoryService/*, READ
+
+g, alice, admin, tenant_us
+g, bob, operator, tenant_us
