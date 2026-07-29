@@ -1,0 +1,172 @@
+version: "3.8"
+
+services:
+  # ==========================================
+  # COUCHDB (OFFLINE SYNC GATEWAY)
+  # ==========================================
+  couchdb:
+    image: couchdb:3.3.3
+    container_name: iudp-couchdb
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=secretpassword
+    ports:
+      - "5984:5984"
+    volumes:
+      - couchdb_data:/opt/couchdb/data
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5984/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ==========================================
+  # APACHE SOLR (COGNITIVE VECTOR SEARCH)
+  # ==========================================
+  solr:
+    image: solr:9.4.0
+    container_name: iudp-solr
+    ports:
+      - "8983:8983"
+    environment:
+      - SOLR_JAVA_MEM=-Xms1g -Xmx1g
+    volumes:
+      - solr_data:/var/solr
+    entrypoint:
+      - docker-entrypoint.sh
+      - solr-precreate
+      - enterprise-assets
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8983/solr/admin/info/system"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ==========================================
+  # APACHE ROCKETMQ (HIGH-THROUGHPUT EVENT BUS)
+  # ==========================================
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.1.4
+    container_name: iudp-rocketmq-namesrv
+    ports:
+      - "9876:9876"
+    command: sh mqnamesrv
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo 'namesrv test'"] # Basic container life check
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.1.4
+    container_name: iudp-rocketmq-broker
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+    environment:
+      - NAMESRV_ADDR=rocketmq-namesrv:9876
+    command: sh mqbroker -c /home/rocketmq/rocketmq-5.1.4/conf/broker.conf
+    volumes:
+      - ./broker.conf:/home/rocketmq/rocketmq-5.1.4/conf/broker.conf:ro
+    depends_on:
+      - rocketmq-namesrv
+    networks:
+      - platform-network
+    restart: unless-stopped
+
+  # ==========================================
+  # APACHE FLINK (REAL-TIME CEP ENGINE)
+  # ==========================================
+  flink-jobmanager:
+    image: flink:1.18.1-scala_2.12
+    container_name: iudp-flink-jobmanager
+    ports:
+      - "8081:8081"
+    command: jobmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        state.backend: hashmap
+        state.checkpoints.dir: file:///opt/flink/checkpoints
+    volumes:
+      - flink_checkpoints:/opt/flink/checkpoints
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  flink-taskmanager:
+    image: flink:1.18.1-scala_2.12
+    container_name: iudp-flink-taskmanager
+    depends_on:
+      - flink-jobmanager
+    command: taskmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 2
+        state.backend: hashmap
+        state.checkpoints.dir: file:///opt/flink/checkpoints
+    volumes:
+      - flink_checkpoints:/opt/flink/checkpoints
+    networks:
+      - platform-network
+    restart: unless-stopped
+
+  # ==========================================
+  # APACHE SKYWALKING (OBSERVABILITY & APM)
+  # ==========================================
+  skywalking-oap:
+    image: apache/skywalking-oap-server:9.7.0
+    container_name: iudp-skywalking-oap
+    ports:
+      - "11800:11800"
+      - "12800:12800"
+    environment:
+      - SW_STORAGE=memory
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "sh", "-c", "nc -z localhost 11800"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  skywalking-ui:
+    image: apache/skywalking-ui:9.7.0
+    container_name: iudp-skywalking-ui
+    ports:
+      - "8080:8080"
+    environment:
+      - SW_OAP_ADDRESS=http://skywalking-oap:12800
+    depends_on:
+      - skywalking-oap
+    networks:
+      - platform-network
+    restart: unless-stopped
+
+volumes:
+  couchdb_data:
+  solr_data:
+  flink_checkpoints:
+
+networks:
+  platform-network:
+    name: iudp-network
+    driver: bridge
