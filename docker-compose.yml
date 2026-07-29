@@ -1,0 +1,195 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # INGESTION & EVENT BACKBONE: APACHE ROCKETMQ
+  # ==========================================
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.3.0
+    container_name: rocketmq-namesrv
+    ports:
+      - "9876:9876"
+    volumes:
+      - rocketmq_namesrv_data:/home/rocketmq/logs
+    environment:
+      - MAX_HEAP_SIZE=512M
+      - HEAP_NEWSIZE=256M
+    command: sh mqnamesrv
+    networks:
+      - data-platform-network
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9876 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.3.0
+    container_name: rocketmq-broker
+    ports:
+      - "10911:10911"
+      - "10909:10909"
+    volumes:
+      - rocketmq_broker_data:/home/rocketmq/store
+      - rocketmq_broker_logs:/home/rocketmq/logs
+    environment:
+      - NAMESRV_ADDR=rocketmq-namesrv:9876
+      - MAX_HEAP_SIZE=1G
+      - HEAP_NEWSIZE=512M
+    command: sh mqbroker -c /home/rocketmq/rocketmq-5.3.0/conf/broker.conf
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    networks:
+      - data-platform-network
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 10911 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # REAL-TIME PROCESSING BACKBONE: APACHE FLINK
+  # ==========================================
+  flink-jobmanager:
+    image: flink:1.19.0-scala_2.12-java17
+    container_name: flink-jobmanager
+    ports:
+      - "8081:8081"
+    command: jobmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        state.backend: rocksdb
+        state.checkpoints.dir: file:///opt/flink/checkpoints
+        state.savepoints.dir: file:///opt/flink/savepoints
+    volumes:
+      - flink_shared_storage:/opt/flink/checkpoints
+      - flink_savepoints:/opt/flink/savepoints
+    networks:
+      - data-platform-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/overview || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  flink-taskmanager:
+    image: flink:1.19.0-scala_2.12-java17
+    container_name: flink-taskmanager
+    ports:
+      - "6121:6121"
+      - "6122:6122"
+    command: taskmanager
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+        state.backend: rocksdb
+    volumes:
+      - flink_shared_storage:/opt/flink/checkpoints
+    networks:
+      - data-platform-network
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 6122 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # SEARCH ENGINE & SEMANTIC AI: APACHE SOLR
+  # ==========================================
+  solr:
+    image: solr:9.6.1
+    container_name: solr
+    ports:
+      - "8983:8983"
+    environment:
+      - SOLR_JAVA_MEM=-Xms1g -Xmx1g
+    command: solr-precreate supply_chain_indices
+    volumes:
+      - solr_data:/var/solr
+    networks:
+      - data-platform-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8983/solr/admin/info/system?wt=json || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+  # ==========================================
+  # OFFLINE BACKEND STORAGE: APACHE COUCHDB
+  # ==========================================
+  couchdb:
+    image: couchdb:3.3.3
+    container_name: couchdb
+    ports:
+      - "5984:5984"
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=secretpassword
+    volumes:
+      - couchdb_data:/opt/couchdb/data
+    networks:
+      - data-platform-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://admin:secretpassword@localhost:5984/_up || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ==========================================
+  # APM & OBSERVABILITY: APACHE SKYWALKING
+  # ==========================================
+  skywalking-oap:
+    image: apache/skywalking-oap-server:10.0.0
+    container_name: skywalking-oap
+    ports:
+      - "11800:11800"
+      - "12800:12800"
+    environment:
+      - SW_STORAGE=memory
+      - JAVA_OPTS=-Xms1g -Xmx1g
+    networks:
+      - data-platform-network
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 11800 || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+  skywalking-ui:
+    image: apache/skywalking-ui:10.0.0
+    container_name: skywalking-ui
+    ports:
+      - "8080:8080"
+    environment:
+      - SW_OAP_ADDRESS=http://skywalking-oap:12800
+    depends_on:
+      skywalking-oap:
+        condition: service_healthy
+    networks:
+      - data-platform-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+networks:
+  data-platform-network:
+    driver: bridge
+
+volumes:
+  rocketmq_namesrv_data:
+  rocketmq_broker_data:
+  rocketmq_broker_logs:
+  flink_shared_storage:
+  flink_savepoints:
+  solr_data:
+  couchdb_data:
