@@ -1,0 +1,24 @@
+# Casbin Multi-Tenant RBAC/ABAC Policies
+# Format: p, sub_role, tenant, obj, act, effect
+
+# Amer Tenant (TENANT_AMER_1) Rules
+p, role:logistics_manager, TENANT_AMER_1, /api/v1/vessels/:id, read, allow
+p, role:logistics_manager, TENANT_AMER_1, /api/v1/vessels/:id, write, allow
+p, role:dock_operator, TENANT_AMER_1, /api/v1/vessels/:id, read, allow
+p, role:dock_operator, TENANT_AMER_1, /api/v1/cranes/:id, activate, allow
+
+# EMEA Tenant (TENANT_EMEA_3) Rules
+p, role:logistics_manager, TENANT_EMEA_3, /api/v1/vessels/:id, read, allow
+p, role:logistics_manager, TENANT_EMEA_3, /api/v1/vessels/:id, write, allow
+p, role:dock_operator, TENANT_EMEA_3, /api/v1/vessels/:id, read, allow
+
+# Global Auditing Team (Global Viewers across specific tenants)
+p, role:auditor, TENANT_AMER_1, /api/v1/audit, read, allow
+p, role:auditor, TENANT_EMEA_3, /api/v1/audit, read, allow
+
+# Role Assignments (Inheritance)
+# Format: g, user, role
+g, jules_cto, role:super_admin
+g, alice_manager, role:logistics_manager
+g, bob_operator, role:dock_operator
+g, charlie_auditor, role:auditor
